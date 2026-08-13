@@ -9,9 +9,6 @@ by Netflix's Chaos Monkey, applied to **cloud security posture**.
 > deliverable is a **detection-coverage matrix**:
 > `misconfig × {Defender for Cloud, Azure Policy, Prowler} → detected / missed / MTTD / MTTR`.
 
-> **Scope:** Azure is the complete project. It is built **multi-cloud-ready** — an **AWS mirror**
-> is an optional future extension, not part of the core deliverable.
-
 ⚠️ **All misconfigurations here are intentional and self-inflicted in an isolated lab** for
 detection testing — never attacks on third parties. Resources are scoped by tag/resource-group/
 prefix and are torn down after every session.
@@ -21,37 +18,29 @@ prefix and are torn down after every session.
 ## Architecture
 
 ```
-                       ┌──────────────────────────────┐
-                       │      Security Monkey (Py)     │
-                       │  picks 1 random misconfig,    │
-                       │  applies it, supports revert  │
-                       └───────────────┬──────────────┘
-                        azure_injectors │ aws_injectors
-                ┌───────────────────────┴───────────────────────┐
-                ▼                                                 ▼
-        ┌───────────────┐                                 ┌───────────────┐
-        │     AZURE     │                                 │      AWS      │
-        │ lab RG (TF)   │                                 │  lab (TF)     │
-        │ NSG / Storage │                                 │ SG / S3 / IAM │
-        │ RBAC          │                                 │               │
-        └───────┬───────┘                                 └───────┬───────┘
-                │ detection                                       │ detection
-     ┌──────────┴──────────┐                          ┌───────────┴──────────┐
-     ▼                     ▼                          ▼                      ▼
- Defender for Cloud    Azure Policy               Security Hub          AWS Config
- (CSPM)                (+ remediation)            
-     └──────────┬──────────┘                          └───────────┬──────────┘
-                └───────────────────┬───────────────────────────┘
-                                    ▼
-                          ┌───────────────────┐
-                          │  Prowler (CNAPP)  │  runs natively on both clouds
-                          └─────────┬─────────┘
-                                    ▼
-                       results/detection-coverage-matrix
+                   ┌───────────────────────────────┐
+                   │      Security Monkey (Py)      │
+                   │  picks a misconfiguration,     │
+                   │  applies it, supports revert   │
+                   └───────────────┬───────────────┘
+                                   │ azure_injectors
+                                   ▼
+                   ┌───────────────────────────────┐
+                   │        Azure lab  (Terraform)  │
+                   │  Resource Group · VNet/NSG ·   │
+                   │  Storage account · RBAC        │
+                   └───────────────┬───────────────┘
+                                   │ detection
+          ┌────────────────────────┼────────────────────────┐
+          ▼                        ▼                         ▼
+ ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+ │  Defender for    │    │   Azure Policy   │    │  Prowler (CNAPP, │
+ │  Cloud  (CSPM)   │    │ (+ remediation)  │    │  open source)    │
+ └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
+          └────────────────────────┼────────────────────────┘
+                                   ▼
+                    results/detection-coverage-matrix
 ```
-
-*The diagram shows the full multi-cloud-ready design. **This project implements the Azure
-branch**; the AWS branch is an optional future extension.*
 
 ---
 
@@ -59,35 +48,30 @@ branch**; the AWS branch is an optional future extension.*
 
 ```
 azure-security-lab/
-├── CLAUDE.md                 # project context / instructions
 ├── README.md
 ├── terraform/
-│   ├── azure/                # lab RG, VNet/NSG, storage, RBAC test principal
-│   └── aws/                  # VPC/SG, S3, IAM  (optional future extension)
+│   └── azure/                # lab RG, VNet/NSG, storage account, RBAC scope
 ├── security_monkey/          # Python package
-│   ├── azure_injectors.py    # Azure misconfig injectors + reverts
-│   ├── aws_injectors.py      # AWS injectors (future-extension stubs)
+│   ├── azure_injectors.py    # misconfig injectors + reverts
+│   ├── base.py               # injector base class + injection ledger
 │   ├── config.py             # env-driven config + safety guards
 │   ├── monkey.py             # picks + applies a random misconfig
 │   └── teardown.py           # revert everything the monkey touched
 ├── detection/                # Prowler run scripts, Azure Policy defs, notes
 ├── results/                  # findings exports + the detection-coverage matrix
-└── docs/                     # architecture diagram, write-up / blog draft
+└── docs/                     # architecture notes, findings write-up
 ```
 
 ---
 
 ## Misconfiguration scenarios
 
-| Class | Azure (this project) | AWS *(optional future extension)* |
-|---|---|---|
-| Network exposure | NSG rule open to `0.0.0.0/0` | Security Group open to `0.0.0.0/0` |
-| Over-permissive identity | Broad RBAC role assignment | Over-permissive IAM policy |
-| Public data | Storage account public access | Public S3 bucket |
-| *(stretch)* Logging disabled | Disable diagnostic setting | Disable CloudTrail/Config |
-
-*The AWS column documents how the design would mirror to a second cloud if extended later. It is
-not required to consider the project complete.*
+| Class | Injected misconfiguration |
+|---|---|
+| Network exposure | NSG inbound rule open to `0.0.0.0/0` (SSH/RDP) |
+| Over-permissive identity | Broad RBAC role assignment at resource-group scope |
+| Public data | Storage account + container opened to anonymous read |
+| *(stretch)* Logging disabled | Disable a diagnostic setting |
 
 ---
 
@@ -97,9 +81,8 @@ not required to consider the project complete.*
 - **Python** ≥ 3.10
 - **Azure CLI** (`az login`) with a personal/lab subscription
 - *(detection)* **Prowler** ≥ 4.x
-- *(optional future / AWS extension)* **AWS CLI** (`aws configure`) with a lab account
 
-## Quick start (Azure MVP)
+## Quick start
 
 ```bash
 # 0. Auth
@@ -121,15 +104,15 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r security_monkey/requirements.txt
 
 # 4. See what it would do WITHOUT touching anything
-python -m security_monkey.monkey --cloud azure --dry-run
+python -m security_monkey.monkey --dry-run
 
 # 5. Inject a random misconfiguration (asks for confirmation)
-python -m security_monkey.monkey --cloud azure
+python -m security_monkey.monkey
 
 # 6. Run detection (Prowler + check Defender / Policy) ... fill the matrix
 
 # 7. Revert everything the monkey did
-python -m security_monkey.teardown --cloud azure
+python -m security_monkey.teardown
 
 # 8. Tear down the lab entirely
 cd terraform/azure && terraform destroy

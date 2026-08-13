@@ -49,7 +49,7 @@ class Injector(abc.ABC):
     key: str = "unset"
     #: one of the misconfig classes from the coverage matrix
     misconfig_class: str = "unset"
-    #: "azure" | "aws"
+    #: cloud identifier, e.g. "azure"
     cloud: str = "unset"
     #: human-readable one-liner
     description: str = ""

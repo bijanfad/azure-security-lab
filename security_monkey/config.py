@@ -1,8 +1,8 @@
 """Env-driven configuration + safety guards for the Security Monkey.
 
 Config comes from environment variables (see .env / Terraform `monkey_env` output). We never
-hard-code credentials — Azure auth uses DefaultAzureCredential (`az login`, env SP, or managed
-identity) and AWS uses the default boto3 credential chain.
+hard-code credentials — Azure auth uses DefaultAzureCredential (`az login`, env service
+principal, or managed identity).
 
 The safety scope (resource group + prefix + subscription) is the single most important control
 in this project: injectors MUST refuse to touch anything outside it.
@@ -63,16 +63,3 @@ class AzureConfig:
                 f"Lab RG {self.resource_group!r} does not start with the safety prefix "
                 f"{self.prefix!r}; refusing to proceed."
             )
-
-
-@dataclass(frozen=True)
-class AwsConfig:
-    region: str
-    prefix: str
-
-    @classmethod
-    def from_env(cls) -> "AwsConfig":
-        return cls(
-            region=os.environ.get("SECLAB_AWS_REGION", "eu-central-1").strip(),
-            prefix=os.environ.get("SECLAB_PREFIX", "seclab").strip(),
-        )

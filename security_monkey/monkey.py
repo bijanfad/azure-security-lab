@@ -1,11 +1,11 @@
-"""Security Monkey CLI — picks and applies a random misconfiguration.
+"""Security Monkey CLI — picks and applies a random Azure misconfiguration.
 
 Examples:
     python -m security_monkey.monkey --list
-    python -m security_monkey.monkey --cloud azure --dry-run
-    python -m security_monkey.monkey --cloud azure                 # random injector
-    python -m security_monkey.monkey --cloud azure --only azure-nsg-open
-    python -m security_monkey.monkey --cloud azure --yes           # skip confirmation
+    python -m security_monkey.monkey --dry-run
+    python -m security_monkey.monkey                       # random injector
+    python -m security_monkey.monkey --only azure-nsg-open
+    python -m security_monkey.monkey --yes                 # skip confirmation
 
 Injections are recorded to results/injections.log.json so `teardown.py` can revert them.
 """
@@ -15,33 +15,14 @@ import argparse
 import random
 import sys
 
-from .base import Injector, append_record
-
-
-def _load_injectors(cloud: str) -> list[Injector]:
-    if cloud == "azure":
-        from .azure_injectors import build_injectors
-    elif cloud == "aws":
-        from .aws_injectors import build_injectors
-    else:
-        raise SystemExit(f"Unknown cloud {cloud!r} (expected 'azure' or 'aws').")
-    return build_injectors()
-
-
-def _catalog(cloud: str) -> list[type[Injector]]:
-    """Injector classes for a cloud — metadata only, no config required."""
-    if cloud == "azure":
-        from .azure_injectors import INJECTOR_CLASSES
-    else:
-        from .aws_injectors import INJECTOR_CLASSES
-    return INJECTOR_CLASSES
+from .azure_injectors import INJECTOR_CLASSES, build_injectors
+from .base import append_record
 
 
 def cmd_list() -> int:
-    for cloud in ("azure", "aws"):
-        print(f"\n{cloud.upper()} injectors:")
-        for cls in _catalog(cloud):
-            print(f"  {cls.key:<24} [{cls.misconfig_class}]  {cls.description}")
+    print("Azure injectors:")
+    for cls in INJECTOR_CLASSES:
+        print(f"  {cls.key:<24} [{cls.misconfig_class}]  {cls.description}")
     return 0
 
 
@@ -54,12 +35,12 @@ def _confirm(prompt: str, assume_yes: bool) -> bool:
     return input(f"{prompt} [y/N] ").strip().lower() in ("y", "yes")
 
 
-def cmd_inject(cloud: str, only: str | None, dry_run: bool, assume_yes: bool) -> int:
-    injectors = _load_injectors(cloud)
+def cmd_inject(only: str | None, dry_run: bool, assume_yes: bool) -> int:
+    injectors = build_injectors()
     if only:
         injectors = [i for i in injectors if i.key == only]
         if not injectors:
-            raise SystemExit(f"No injector with key {only!r} for cloud {cloud!r}.")
+            raise SystemExit(f"No injector with key {only!r} (see --list).")
 
     chosen = injectors[0] if only else random.choice(injectors)
 
@@ -72,7 +53,7 @@ def cmd_inject(cloud: str, only: str | None, dry_run: bool, assume_yes: bool) ->
         return 0
 
     if not _confirm(
-        f"\nThis will WEAKEN a real cloud resource in the {cloud} lab. Proceed?",
+        "\nThis will WEAKEN a real Azure resource in the lab. Proceed?",
         assume_yes,
     ):
         print("Aborted.")
@@ -88,9 +69,8 @@ def cmd_inject(cloud: str, only: str | None, dry_run: bool, assume_yes: bool) ->
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="security_monkey.monkey",
-        description="Inject a controlled cloud misconfiguration for detection testing.",
+        description="Inject a controlled Azure misconfiguration for detection testing.",
     )
-    p.add_argument("--cloud", choices=["azure", "aws"], help="Target cloud.")
     p.add_argument("--only", help="Force a specific injector by key (see --list).")
     p.add_argument("--dry-run", action="store_true", help="Show the pick; make no changes.")
     p.add_argument("--yes", action="store_true", help="Skip the interactive confirmation.")
@@ -102,9 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.list:
         return cmd_list()
-    if not args.cloud:
-        raise SystemExit("Specify --cloud azure|aws (or use --list).")
-    return cmd_inject(args.cloud, args.only, args.dry_run, args.yes)
+    return cmd_inject(args.only, args.dry_run, args.yes)
 
 
 if __name__ == "__main__":

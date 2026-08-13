@@ -5,37 +5,26 @@ restores the secure Terraform baseline WITHOUT destroying the lab itself (run
 `terraform destroy` for that).
 
 Examples:
-    python -m security_monkey.teardown --cloud azure
-    python -m security_monkey.teardown --cloud azure --yes
+    python -m security_monkey.teardown
+    python -m security_monkey.teardown --yes
 """
 from __future__ import annotations
 
 import argparse
 import sys
 
-from .base import Injector, InjectionRecord, load_ledger, save_ledger
+from .azure_injectors import build_injectors
+from .base import InjectionRecord, load_ledger, save_ledger
 
 
-def _injector_index(cloud: str) -> dict[str, Injector]:
-    if cloud == "azure":
-        from .azure_injectors import build_injectors
-    elif cloud == "aws":
-        from .aws_injectors import build_injectors
-    else:
-        raise SystemExit(f"Unknown cloud {cloud!r}.")
-    return {i.key: i for i in build_injectors()}
-
-
-def cmd_teardown(cloud: str, assume_yes: bool) -> int:
+def cmd_teardown(assume_yes: bool) -> int:
     ledger = load_ledger()
-    pending = [
-        r for r in ledger if r.cloud == cloud and not r.reverted
-    ]
+    pending = [r for r in ledger if not r.reverted]
     if not pending:
-        print(f"Nothing to revert for cloud {cloud!r}. Ledger is clean.")
+        print("Nothing to revert. Ledger is clean.")
         return 0
 
-    print(f"{len(pending)} injection(s) to revert for {cloud}:")
+    print(f"{len(pending)} injection(s) to revert:")
     for r in pending:
         print(f"  - {r.injector_key} on {r.target}")
 
@@ -47,7 +36,7 @@ def cmd_teardown(cloud: str, assume_yes: bool) -> int:
             print("Aborted.")
             return 1
 
-    injectors = _injector_index(cloud)
+    injectors = {i.key: i for i in build_injectors()}
     failures: list[tuple[InjectionRecord, Exception]] = []
 
     # Revert most-recent-first so layered changes unwind cleanly.
@@ -78,10 +67,9 @@ def main(argv: list[str] | None = None) -> int:
         prog="security_monkey.teardown",
         description="Revert Security Monkey injections recorded in the ledger.",
     )
-    p.add_argument("--cloud", choices=["azure", "aws"], required=True)
     p.add_argument("--yes", action="store_true", help="Skip the interactive confirmation.")
     args = p.parse_args(argv)
-    return cmd_teardown(args.cloud, args.yes)
+    return cmd_teardown(args.yes)
 
 
 if __name__ == "__main__":
