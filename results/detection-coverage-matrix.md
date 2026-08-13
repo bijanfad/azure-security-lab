@@ -7,10 +7,25 @@ Legend: ✅ detected · ❌ missed · ⏳ MTTD · 🔧 auto-remediated (MTTR) ·
 
 | Misconfig class | Injector | Defender for Cloud | Azure Policy | Prowler |
 |---|---|---|---|---|
-| Network exposure | `azure-nsg-open` | _tbd_ | _tbd_ | _tbd_ |
+| Network exposure | `azure-nsg-open` | _tbd_ | _tbd_ | ⚠️ **partial** — misses multi-port; see note 1 |
 | Public data | `azure-storage-public` | _tbd_ | _tbd_ | _tbd_ |
 | Over-permissive identity | `azure-rbac-broad` | _tbd_ | _tbd_ | _tbd_ |
 
 ## Notes / observations
 
-- _Fill in coverage gaps and MTTR numbers as runs complete._
+**Note 1 — Prowler blind spot: multi-port NSG rules (network exposure).**
+Prowler **v5.37.1**'s Azure network internet-access checks evaluate only
+`rule.destination_port_range` (singular) and ignore `destination_port_ranges` (plural). Verified
+in the check source (`network_rdp_internet_access_restricted.py`) and confirmed by a controlled
+A/B experiment on `seclab-nsg` (2026-08-13):
+
+| NSG state | RDP check (`network_rdp_internet_access_restricted`) |
+|---|---|
+| Rule opens 3389 via `destination_port_ranges` (plural) — `azure-nsg-open` | **PASS** (missed) |
+| + rule opens 3389 via `destination_port_range` (singular) — `azure-nsg-open-singleport` | **FAIL** (caught) |
+
+Same resource, same real internet exposure (`0.0.0.0/0` → 3389); detection flips purely on the
+port-field representation. `network_ssh_internet_access_restricted` also stayed **PASS** while
+port 22 was genuinely open via the plural rule — a second instance of the same gap. Source-address
+handling (`0.0.0.0/0`) is correct. Multi-port rules using `destination_port_ranges` are common in
+real Azure NSGs, so this is a genuine coverage gap → candidate upstream fix/PR to Prowler.

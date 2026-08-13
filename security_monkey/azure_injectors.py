@@ -20,6 +20,8 @@ from .config import AzureConfig
 # deny (4000) so it actually takes effect.
 _OPEN_RULE_NAME = "seclab-injected-open-inbound"
 _OPEN_RULE_PRIORITY = 100
+_OPEN_SINGLEPORT_RULE_NAME = "seclab-injected-open-singleport"
+_OPEN_SINGLEPORT_PRIORITY = 101
 _PUBLIC_CONTAINER = "labdata"
 
 
@@ -94,6 +96,58 @@ class NsgOpenInjector(Injector):
 
     def revert(self, record: InjectionRecord) -> None:
         rule_name = record.detail.get("rule_name", _OPEN_RULE_NAME)
+        poller = self.clients.network.security_rules.begin_delete(
+            self.cfg.resource_group, self.cfg.nsg_name, rule_name
+        )
+        poller.result()
+
+
+class NsgOpenSinglePortInjector(Injector):
+    """Single-port variant of `azure-nsg-open`.
+
+    Same real-world exposure (RDP 3389 open to 0.0.0.0/0), but the port is expressed via the
+    SINGULAR `destination_port_range` field instead of the plural `destination_port_ranges`.
+    Used to demonstrate a Prowler coverage gap: Prowler's Azure RDP/SSH internet-access checks
+    inspect only the singular field, so they DETECT this variant but MISS the plural one.
+    See results/detection-coverage-matrix.md (note 1).
+    """
+
+    key = "azure-nsg-open-singleport"
+    misconfig_class = "network-exposure"
+    cloud = "azure"
+    description = "Opens RDP (3389) to 0.0.0.0/0 via destination_port_range (singular) — the Prowler-detectable variant."
+
+    def __init__(self, cfg: AzureConfig, clients: _AzureClients):
+        self.cfg = cfg
+        self.clients = clients
+
+    def inject(self) -> InjectionRecord:
+        self.cfg.assert_in_scope(self.cfg.resource_group)
+        rule = {
+            "protocol": "Tcp",
+            "source_port_range": "*",
+            "destination_port_range": "3389",
+            "source_address_prefix": "0.0.0.0/0",
+            "destination_address_prefix": "*",
+            "access": "Allow",
+            "priority": _OPEN_SINGLEPORT_PRIORITY,
+            "direction": "Inbound",
+            "description": "INTENTIONAL lab misconfig injected by Security Monkey (single-port variant).",
+        }
+        poller = self.clients.network.security_rules.begin_create_or_update(
+            self.cfg.resource_group, self.cfg.nsg_name, _OPEN_SINGLEPORT_RULE_NAME, rule
+        )
+        poller.result()
+        return InjectionRecord(
+            injector_key=self.key,
+            cloud=self.cloud,
+            misconfig_class=self.misconfig_class,
+            target=f"{self.cfg.nsg_name}/{_OPEN_SINGLEPORT_RULE_NAME}",
+            detail={"rule_name": _OPEN_SINGLEPORT_RULE_NAME, "nsg": self.cfg.nsg_name},
+        )
+
+    def revert(self, record: InjectionRecord) -> None:
+        rule_name = record.detail.get("rule_name", _OPEN_SINGLEPORT_RULE_NAME)
         poller = self.clients.network.security_rules.begin_delete(
             self.cfg.resource_group, self.cfg.nsg_name, rule_name
         )
@@ -230,6 +284,7 @@ class RbacBroadInjector(Injector):
 #: Injector classes, for metadata listing without needing cloud config.
 INJECTOR_CLASSES: list[type[Injector]] = [
     NsgOpenInjector,
+    NsgOpenSinglePortInjector,
     StoragePublicInjector,
     RbacBroadInjector,
 ]

@@ -63,3 +63,9 @@ docs/requirements-docs.txt
 .idea/
 .vscode/
 *.swp
+
+# Claude Code local settings (never publish)
+.claude/settings.local.json
+
+# Security Monkey runtime ledger (transient state)
+results/injections.log.json

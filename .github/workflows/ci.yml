@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: hashicorp/setup-terraform@v3
+
+      # Init providers (no backend) so `terraform validate` can run in check.sh.
+      - name: Terraform init (no backend)
+        run: terraform -chdir=terraform/azure init -backend=false -input=false
+
+      - name: Run repo checks
+        run: bash scripts/check.sh
