@@ -1,0 +1,65 @@
+# ---- Terraform ----
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!example.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+.terraform.lock.hcl
+
+# ---- Credentials / secrets (NEVER commit) ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+credentials
+azure.json
+aws_credentials
+*-sp.json
+service-principal*.json
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+.venv*/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- Prowler / scan outputs ----
+detection/prowler/output/
+*.ocsf.json
+prowler-output-*
+
+# ---- Private learning materials (kept local, never published) ----
+# Personal project context + self-teaching docs. The public repo is a professional
+# artifact; these stay on the local machine only.
+CLAUDE.md
+docs/tutorial.md
+docs/tutorial.pdf
+docs/ROADMAP.md
+docs/build_pdf.py
+docs/requirements-docs.txt
+
+# ---- OS / editor ----
+.DS_Store
+.idea/
+.vscode/
+*.swp

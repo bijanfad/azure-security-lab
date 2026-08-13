@@ -1,0 +1,242 @@
+"""Azure misconfiguration injectors.
+
+Each injector weakens the secure baseline created by terraform/azure/. Auth uses
+DefaultAzureCredential, so `az login` (or an env service principal) is enough — we never
+handle secrets directly.
+
+Injectors are constructed lazily (SDK clients are only created when needed) so that
+`--dry-run` and `--list` work without any cloud credentials or network calls.
+"""
+from __future__ import annotations
+
+import os
+import uuid
+from functools import cached_property
+
+from .base import Injector, InjectionRecord
+from .config import AzureConfig
+
+# Priority of the inbound ALLOW rule the network injector adds. Lower than the baseline
+# deny (4000) so it actually takes effect.
+_OPEN_RULE_NAME = "seclab-injected-open-inbound"
+_OPEN_RULE_PRIORITY = 100
+_PUBLIC_CONTAINER = "labdata"
+
+
+class _AzureClients:
+    """Lazily-built Azure SDK clients sharing one credential."""
+
+    def __init__(self, cfg: AzureConfig):
+        self.cfg = cfg
+
+    @cached_property
+    def _credential(self):
+        from azure.identity import DefaultAzureCredential
+
+        return DefaultAzureCredential()
+
+    @cached_property
+    def network(self):
+        from azure.mgmt.network import NetworkManagementClient
+
+        return NetworkManagementClient(self._credential, self.cfg.subscription_id)
+
+    @cached_property
+    def storage(self):
+        from azure.mgmt.storage import StorageManagementClient
+
+        return StorageManagementClient(self._credential, self.cfg.subscription_id)
+
+    @cached_property
+    def authorization(self):
+        from azure.mgmt.authorization import AuthorizationManagementClient
+
+        return AuthorizationManagementClient(self._credential, self.cfg.subscription_id)
+
+
+# --------------------------------------------------------------------------- #
+# 1. Network exposure — open an NSG inbound rule to 0.0.0.0/0
+# --------------------------------------------------------------------------- #
+class NsgOpenInjector(Injector):
+    key = "azure-nsg-open"
+    misconfig_class = "network-exposure"
+    cloud = "azure"
+    description = "Adds an NSG inbound rule allowing ANY source (0.0.0.0/0) to reach SSH/RDP."
+
+    def __init__(self, cfg: AzureConfig, clients: _AzureClients):
+        self.cfg = cfg
+        self.clients = clients
+
+    def inject(self) -> InjectionRecord:
+        self.cfg.assert_in_scope(self.cfg.resource_group)
+        rule = {
+            "protocol": "Tcp",
+            "source_port_range": "*",
+            "destination_port_ranges": ["22", "3389"],
+            "source_address_prefix": "0.0.0.0/0",
+            "destination_address_prefix": "*",
+            "access": "Allow",
+            "priority": _OPEN_RULE_PRIORITY,
+            "direction": "Inbound",
+            "description": "INTENTIONAL lab misconfig injected by Security Monkey.",
+        }
+        poller = self.clients.network.security_rules.begin_create_or_update(
+            self.cfg.resource_group, self.cfg.nsg_name, _OPEN_RULE_NAME, rule
+        )
+        poller.result()
+        return InjectionRecord(
+            injector_key=self.key,
+            cloud=self.cloud,
+            misconfig_class=self.misconfig_class,
+            target=f"{self.cfg.nsg_name}/{_OPEN_RULE_NAME}",
+            detail={"rule_name": _OPEN_RULE_NAME, "nsg": self.cfg.nsg_name},
+        )
+
+    def revert(self, record: InjectionRecord) -> None:
+        rule_name = record.detail.get("rule_name", _OPEN_RULE_NAME)
+        poller = self.clients.network.security_rules.begin_delete(
+            self.cfg.resource_group, self.cfg.nsg_name, rule_name
+        )
+        poller.result()
+
+
+# --------------------------------------------------------------------------- #
+# 2. Public data — enable public blob access + a public container
+# --------------------------------------------------------------------------- #
+class StoragePublicInjector(Injector):
+    key = "azure-storage-public"
+    misconfig_class = "public-data"
+    cloud = "azure"
+    description = "Enables blob public access on the storage account and opens a container to anonymous read."
+
+    def __init__(self, cfg: AzureConfig, clients: _AzureClients):
+        self.cfg = cfg
+        self.clients = clients
+
+    def inject(self) -> InjectionRecord:
+        self.cfg.assert_in_scope(self.cfg.resource_group)
+        # Step 1: allow public access at the account level.
+        self.clients.storage.storage_accounts.update(
+            self.cfg.resource_group,
+            self.cfg.storage_account,
+            {"allow_blob_public_access": True},
+        )
+        # Step 2: open the container to anonymous blob read.
+        self.clients.storage.blob_containers.update(
+            self.cfg.resource_group,
+            self.cfg.storage_account,
+            _PUBLIC_CONTAINER,
+            {"public_access": "Blob"},
+        )
+        return InjectionRecord(
+            injector_key=self.key,
+            cloud=self.cloud,
+            misconfig_class=self.misconfig_class,
+            target=f"{self.cfg.storage_account}/{_PUBLIC_CONTAINER}",
+            detail={"container": _PUBLIC_CONTAINER, "account": self.cfg.storage_account},
+        )
+
+    def revert(self, record: InjectionRecord) -> None:
+        container = record.detail.get("container", _PUBLIC_CONTAINER)
+        # Restore container to private first, then lock the account back down.
+        self.clients.storage.blob_containers.update(
+            self.cfg.resource_group,
+            self.cfg.storage_account,
+            container,
+            {"public_access": "None"},
+        )
+        self.clients.storage.storage_accounts.update(
+            self.cfg.resource_group,
+            self.cfg.storage_account,
+            {"allow_blob_public_access": False},
+        )
+
+
+# --------------------------------------------------------------------------- #
+# 3. Over-permissive identity — assign a broad RBAC role at the RG scope
+# --------------------------------------------------------------------------- #
+# Built-in role definition IDs (subscription-agnostic GUIDs).
+_ROLE_IDS = {
+    "Owner": "8e3af657-a8ff-443c-a75c-2fe8c4bcb635",
+    "Contributor": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+}
+
+
+class RbacBroadInjector(Injector):
+    key = "azure-rbac-broad"
+    misconfig_class = "over-permissive-identity"
+    cloud = "azure"
+    description = "Assigns a broad built-in role (default Contributor) at the lab RG scope to a test principal."
+
+    def __init__(self, cfg: AzureConfig, clients: _AzureClients):
+        self.cfg = cfg
+        self.clients = clients
+        # Principal to over-privilege. Supply a throwaway lab principal's object ID.
+        self.principal_id = os.environ.get("SECLAB_AZURE_TEST_PRINCIPAL_ID", "").strip()
+        self.role = os.environ.get("SECLAB_AZURE_BROAD_ROLE", "Contributor").strip()
+
+    @property
+    def _scope(self) -> str:
+        return (
+            f"/subscriptions/{self.cfg.subscription_id}"
+            f"/resourceGroups/{self.cfg.resource_group}"
+        )
+
+    def inject(self) -> InjectionRecord:
+        self.cfg.assert_in_scope(self.cfg.resource_group)
+        if not self.principal_id:
+            raise RuntimeError(
+                "SECLAB_AZURE_TEST_PRINCIPAL_ID is not set. Provide the object ID of a "
+                "throwaway lab principal to over-privilege (see README)."
+            )
+        role_id = _ROLE_IDS.get(self.role, _ROLE_IDS["Contributor"])
+        role_definition_id = (
+            f"/subscriptions/{self.cfg.subscription_id}"
+            f"/providers/Microsoft.Authorization/roleDefinitions/{role_id}"
+        )
+        assignment_name = str(uuid.uuid4())
+        self.clients.authorization.role_assignments.create(
+            scope=self._scope,
+            role_assignment_name=assignment_name,
+            parameters={
+                "properties": {
+                    "role_definition_id": role_definition_id,
+                    "principal_id": self.principal_id,
+                    "principal_type": "ServicePrincipal",
+                }
+            },
+        )
+        return InjectionRecord(
+            injector_key=self.key,
+            cloud=self.cloud,
+            misconfig_class=self.misconfig_class,
+            target=f"{self.cfg.resource_group} <- {self.role}",
+            detail={
+                "assignment_name": assignment_name,
+                "scope": self._scope,
+                "role": self.role,
+                "principal_id": self.principal_id,
+            },
+        )
+
+    def revert(self, record: InjectionRecord) -> None:
+        scope = record.detail.get("scope", self._scope)
+        assignment_name = record.detail["assignment_name"]
+        self.clients.authorization.role_assignments.delete(
+            scope=scope, role_assignment_name=assignment_name
+        )
+
+
+#: Injector classes, for metadata listing without needing cloud config.
+INJECTOR_CLASSES: list[type[Injector]] = [
+    NsgOpenInjector,
+    StoragePublicInjector,
+    RbacBroadInjector,
+]
+
+
+def build_injectors(cfg: AzureConfig | None = None) -> list[Injector]:
+    """Return all Azure injectors. Cheap: no cloud calls until inject/revert."""
+    cfg = cfg or AzureConfig.from_env()
+    clients = _AzureClients(cfg)
+    return [cls(cfg, clients) for cls in INJECTOR_CLASSES]
