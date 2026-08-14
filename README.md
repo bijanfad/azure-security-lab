@@ -9,6 +9,10 @@ by Netflix's Chaos Monkey, applied to **cloud security posture**.
 > deliverable is a **detection-coverage matrix**:
 > `misconfig × {Defender for Cloud, Azure Policy, Prowler} → detected / missed / MTTD / MTTR`.
 
+📄 **Results:** the **[findings write-up](docs/findings.md)** and the
+**[coverage matrix](results/detection-coverage-matrix.md)** — incl. a verified Prowler blind spot
+for multi-port NSG rules and an Azure Policy detect→auto-remediate loop.
+
 ⚠️ **All misconfigurations here are intentional and self-inflicted in an isolated lab** for
 detection testing — never attacks on third parties. Resources are scoped by tag/resource-group/
 prefix and are torn down after every session.
@@ -135,9 +139,10 @@ what to revert.
 
 ## Status
 
-Azure scaffolding in place: Terraform lab module + Python Security Monkey injectors + teardown.
-Next: deploy the lab, run the injectors, and populate the detection-coverage matrix in
-[`results/`](results/).
+Core MVP complete: Terraform lab, Security Monkey (network / storage / RBAC injectors + ledger
+teardown), Prowler + Azure Policy (detect **and** auto-remediate) runs, and the
+[coverage matrix](results/detection-coverage-matrix.md) + [findings write-up](docs/findings.md).
+Next: optional extensions — custom "mini-CNAPP" checks, continuous mode, AI-assisted reporting.
 
 ## License
 

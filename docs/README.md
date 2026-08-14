@@ -1,8 +1,8 @@
 # Docs
 
 - **architecture.md** — architecture diagram + design rationale *(TODO; a text diagram is in the root README)*.
-- **findings.md** — analysis write-up: methodology, the detection-coverage results, and where
-  native controls and Prowler differ *(TODO — written after the first full run)*.
+- **[findings.md](findings.md)** — analysis write-up: methodology, the detection-coverage results,
+  and where native controls and Prowler differ. ✅
 
 Findings write-up outline:
 1. **Problem** — cloud misconfigurations as latent risk; testing posture, not just perimeters.
