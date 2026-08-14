@@ -7,8 +7,8 @@ Legend: ✅ detected · ❌ missed · ⏳ MTTD · 🔧 auto-remediated (MTTR) ·
 
 | Misconfig class | Injector | Defender for Cloud | Azure Policy | Prowler |
 |---|---|---|---|---|
-| Network exposure | `azure-nsg-open` | _tbd_ | _tbd_ | ⚠️ **partial** — misses multi-port; see note 1 |
-| Public data | `azure-storage-public` | _tbd (clock started 08:24)_ | ✅ detected → 🔧 auto-remediated — note 3 | ✅ detected (instant) — note 2 |
+| Network exposure | `azure-nsg-open` | — not tested (note 4) | _tbd_ | ⚠️ **partial** — misses multi-port; see note 1 |
+| Public data | `azure-storage-public` | ❌ not observed — note 4 | ✅ detected → 🔧 auto-remediated — note 3 | ✅ detected (instant) — note 2 |
 | Over-permissive identity | `azure-rbac-broad` | _tbd_ | _tbd_ | _tbd_ |
 
 ## Notes / observations
@@ -53,3 +53,14 @@ a cycle up to ~24h (we forced it on-demand — so realistic MTTD is "next cycle,
 remediating *existing* resources requires a remediation task. Bonus: because the Modify effect is
 still assigned, it now also **prevents** re-enabling public access (it intercepts the ARM write) —
 a prevention story on top of remediation. Reproducible commands: `detection/azure-policy/`.
+
+**Note 4 — Defender for Cloud: not observed this run (timing, not absence).**
+`FoundationalCspm` is **enabled (Standard)** on the subscription — verified via `az security
+pricing list` — so Defender *is* assessing. Yet no recommendation for `seclab-rg` appeared during
+the session, because Defender's CSPM assessment cadence is slow (hours) while the public-storage
+exposure window was only ~33 min (injected 08:24 → Policy auto-remediated ~08:57). **Fast automated
+remediation outpaced slow native CSPM detection** — an interesting interplay, not a Defender
+failure. The network-exposure case wasn't tested against Defender: its NSG recommendations are
+VM-centric and the lab runs no VM. To get a hard Defender MTTD, run a dedicated experiment —
+inject `azure-storage-public`, do **not** assign the Modify remediation policy, leave it several
+hours, then read Recommendations.
