@@ -169,19 +169,37 @@ class StoragePublicInjector(Injector):
 
     def inject(self) -> InjectionRecord:
         self.cfg.assert_in_scope(self.cfg.resource_group)
-        # Step 1: allow public access at the account level.
+        import time
+
+        from azure.core.exceptions import HttpResponseError
+        from azure.mgmt.storage.models import (
+            BlobContainer,
+            StorageAccountUpdateParameters,
+        )
+
+        # Step 1: allow public access at the account level (the Terraform baseline has it off).
         self.clients.storage.storage_accounts.update(
             self.cfg.resource_group,
             self.cfg.storage_account,
-            {"allow_blob_public_access": True},
+            StorageAccountUpdateParameters(allow_blob_public_access=True),
         )
-        # Step 2: open the container to anonymous blob read.
-        self.clients.storage.blob_containers.update(
-            self.cfg.resource_group,
-            self.cfg.storage_account,
-            _PUBLIC_CONTAINER,
-            {"public_access": "Blob"},
-        )
+        # Step 2: open the container to anonymous blob read. The account-level flag can take a
+        # few seconds to propagate to the blob service, so retry on PublicAccessNotPermitted.
+        for attempt in range(6):
+            try:
+                self.clients.storage.blob_containers.update(
+                    self.cfg.resource_group,
+                    self.cfg.storage_account,
+                    _PUBLIC_CONTAINER,
+                    BlobContainer(public_access="Blob"),
+                )
+                break
+            except HttpResponseError as exc:
+                if "PublicAccessNotPermitted" in str(exc) and attempt < 5:
+                    time.sleep(5)
+                    continue
+                raise
+
         return InjectionRecord(
             injector_key=self.key,
             cloud=self.cloud,
@@ -191,18 +209,23 @@ class StoragePublicInjector(Injector):
         )
 
     def revert(self, record: InjectionRecord) -> None:
+        from azure.mgmt.storage.models import (
+            BlobContainer,
+            StorageAccountUpdateParameters,
+        )
+
         container = record.detail.get("container", _PUBLIC_CONTAINER)
         # Restore container to private first, then lock the account back down.
         self.clients.storage.blob_containers.update(
             self.cfg.resource_group,
             self.cfg.storage_account,
             container,
-            {"public_access": "None"},
+            BlobContainer(public_access="None"),
         )
         self.clients.storage.storage_accounts.update(
             self.cfg.resource_group,
             self.cfg.storage_account,
-            {"allow_blob_public_access": False},
+            StorageAccountUpdateParameters(allow_blob_public_access=False),
         )
 
 
