@@ -21,6 +21,11 @@ output "storage_container_name" {
   value = azurerm_storage_container.lab.name
 }
 
+output "test_principal_id" {
+  description = "Object (principal) ID of the throwaway managed identity the RBAC injector over-privileges."
+  value       = azurerm_user_assigned_identity.target.principal_id
+}
+
 output "monkey_env" {
   description = "Copy these into your .env for the Security Monkey."
   value       = <<-EOT
@@ -28,6 +33,8 @@ output "monkey_env" {
     SECLAB_AZURE_RESOURCE_GROUP=${azurerm_resource_group.lab.name}
     SECLAB_AZURE_NSG=${azurerm_network_security_group.lab.name}
     SECLAB_AZURE_STORAGE_ACCOUNT=${azurerm_storage_account.lab.name}
+    SECLAB_AZURE_TEST_PRINCIPAL_ID=${azurerm_user_assigned_identity.target.principal_id}
+    SECLAB_AZURE_BROAD_ROLE=Owner
     SECLAB_PREFIX=${var.prefix}
   EOT
 }

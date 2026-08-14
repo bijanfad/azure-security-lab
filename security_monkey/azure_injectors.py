@@ -272,17 +272,32 @@ class RbacBroadInjector(Injector):
             f"/providers/Microsoft.Authorization/roleDefinitions/{role_id}"
         )
         assignment_name = str(uuid.uuid4())
-        self.clients.authorization.role_assignments.create(
-            scope=self._scope,
-            role_assignment_name=assignment_name,
-            parameters={
-                "properties": {
-                    "role_definition_id": role_definition_id,
-                    "principal_id": self.principal_id,
-                    "principal_type": "ServicePrincipal",
-                }
-            },
-        )
+        params = {
+            "properties": {
+                "role_definition_id": role_definition_id,
+                "principal_id": self.principal_id,
+                "principal_type": "ServicePrincipal",
+            }
+        }
+        # A freshly-created managed identity can take a few seconds to replicate into Entra ID,
+        # so the role assignment may briefly fail with PrincipalNotFound — retry.
+        import time
+
+        from azure.core.exceptions import HttpResponseError
+
+        for attempt in range(6):
+            try:
+                self.clients.authorization.role_assignments.create(
+                    scope=self._scope,
+                    role_assignment_name=assignment_name,
+                    parameters=params,
+                )
+                break
+            except HttpResponseError as exc:
+                if "PrincipalNotFound" in str(exc) and attempt < 5:
+                    time.sleep(5)
+                    continue
+                raise
         return InjectionRecord(
             injector_key=self.key,
             cloud=self.cloud,

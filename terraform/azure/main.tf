@@ -87,3 +87,17 @@ resource "azurerm_storage_container" "lab" {
   storage_account_name  = azurerm_storage_account.lab.name
   container_access_type = "private"
 }
+
+#############################################
+# Throwaway target principal for the over-permissive-identity (RBAC) injector.
+# A user-assigned managed identity is an ARM resource (no Entra app-registration rights needed),
+# so it works even in a locked-down org tenant. Its principal_id is a valid role-assignment
+# target; the `azure-rbac-broad` injector grants it a broad role (Owner) at the lab RG scope.
+# It holds NO roles by default — the injector is what over-privileges it.
+#############################################
+resource "azurerm_user_assigned_identity" "target" {
+  name                = "${var.prefix}-target-mi"
+  resource_group_name = azurerm_resource_group.lab.name
+  location            = azurerm_resource_group.lab.location
+  tags                = var.tags
+}
