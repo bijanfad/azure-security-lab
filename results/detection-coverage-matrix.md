@@ -5,11 +5,22 @@ detected it, how long it took (MTTD), and whether it was auto-remediated (MTTR).
 
 Legend: ✅ detected · ❌ missed · ⏳ MTTD · 🔧 auto-remediated (MTTR) · — n/a
 
+**Key takeaways (Azure, this run).** Coverage is strongest for *storage/data* config, weaker for
+*network* nuance, and weakest for *identity/RBAC*:
+- **Public data** — best covered: Prowler flagged it in seconds; Azure Policy detected **and
+  auto-remediated** it; only Defender missed it, purely because fast remediation closed the
+  exposure window before its slow CSPM cycle ran (note 4).
+- **Network exposure** — Prowler has a real **blind spot**: it misses multi-port NSG rules
+  (`destination_port_ranges`), catching only the singular form (note 1).
+- **Over-permissive identity** — **broadly uncovered**: Prowler doesn't flag RG-scoped role
+  assignments to workload identities; native RBAC controls target subscription-level human owners
+  (note 5). CSPM reads config well but struggles with RBAC intent/blast-radius.
+
 | Misconfig class | Injector | Defender for Cloud | Azure Policy | Prowler |
 |---|---|---|---|---|
 | Network exposure | `azure-nsg-open` | — not tested (note 4) | _tbd_ | ⚠️ **partial** — misses multi-port; see note 1 |
 | Public data | `azure-storage-public` | ❌ not observed — note 4 | ✅ detected → 🔧 auto-remediated — note 3 | ✅ detected (instant) — note 2 |
-| Over-permissive identity | `azure-rbac-broad` | _tbd_ | _tbd_ | _tbd_ |
+| Over-permissive identity | `azure-rbac-broad` | — not tested (owner-count oriented; note 5) | _tbd (thin built-in coverage)_ | ❌ missed — note 5 |
 
 ## Notes / observations
 
@@ -64,3 +75,15 @@ failure. The network-exposure case wasn't tested against Defender: its NSG recom
 VM-centric and the lab runs no VM. To get a hard Defender MTTD, run a dedicated experiment —
 inject `azure-storage-public`, do **not** assign the Modify remediation policy, leave it several
 hours, then read Recommendations.
+
+**Note 5 — Over-permissive RBAC is not detected by Prowler (verified).**
+`azure-rbac-broad` granted **Owner** on the lab RG to a throwaway user-assigned managed identity
+(`seclab-target-mi`, principal `5e58cf57…`). A Prowler `iam`+`entra` scan (2026-08-14) returned
+102 fails, but **none reference the injected assignment** (verified by grepping the OCSF output for
+the principal ID / `seclab-target-mi` / `resourceGroups/seclab-rg` — zero matches). Prowler's Azure
+IAM checks target custom-role *definitions*, User Access Administrator assignments, and
+subscription-level owner hygiene — not RG-scoped role assignments to workload identities. Defender
+for Cloud's RBAC recommendations are likewise oriented at subscription-level *human* owner counts.
+So the over-permissive-identity class is **broadly under-covered by CSPM** — posture tooling reads
+resource config well but struggles with RBAC intent and blast-radius. (The 99 Entra fails are
+tenant-wide identity hygiene unrelated to the injection.)

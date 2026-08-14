@@ -272,12 +272,12 @@ class RbacBroadInjector(Injector):
             f"/providers/Microsoft.Authorization/roleDefinitions/{role_id}"
         )
         assignment_name = str(uuid.uuid4())
+        # Flat keys — the SDK maps them onto the REST `properties.*` shape itself. Wrapping them
+        # in an extra "properties" layer produces a MalformedRoleAssignmentRequest.
         params = {
-            "properties": {
-                "role_definition_id": role_definition_id,
-                "principal_id": self.principal_id,
-                "principal_type": "ServicePrincipal",
-            }
+            "role_definition_id": role_definition_id,
+            "principal_id": self.principal_id,
+            "principal_type": "ServicePrincipal",
         }
         # A freshly-created managed identity can take a few seconds to replicate into Entra ID,
         # so the role assignment may briefly fail with PrincipalNotFound — retry.
