@@ -8,7 +8,7 @@ Legend: ✅ detected · ❌ missed · ⏳ MTTD · 🔧 auto-remediated (MTTR) ·
 | Misconfig class | Injector | Defender for Cloud | Azure Policy | Prowler |
 |---|---|---|---|---|
 | Network exposure | `azure-nsg-open` | _tbd_ | _tbd_ | ⚠️ **partial** — misses multi-port; see note 1 |
-| Public data | `azure-storage-public` | _tbd (Defender clock started 2026-08-14 08:24)_ | _tbd_ | ✅ detected (instant) — see note 2 |
+| Public data | `azure-storage-public` | _tbd (clock started 08:24)_ | ✅ detected → 🔧 auto-remediated — note 3 | ✅ detected (instant) — note 2 |
 | Over-permissive identity | `azure-rbac-broad` | _tbd_ | _tbd_ | _tbd_ |
 
 ## Notes / observations
@@ -40,3 +40,16 @@ rotation, cross-tenant replication, and the shared-key / public-network-access d
 Terraform baseline). **Only `storage_blob_public_access_level_is_disabled` is attributable to the
 injection** (PASS at baseline → FAIL after). Contrast with note 1: Prowler caught the public
 storage instantly but missed the multi-port NSG exposure.
+
+**Note 3 — Azure Policy: detect *and* auto-remediate the public-data injection.**
+Assigned the built-in **Modify** policy "Configure your Storage account public access to be
+disallowed" (`13502221-8df0-4414-9937-de9c5c4e396b`) at the lab RG with a system-assigned managed
+identity (granted **Storage Account Contributor**). Timeline (2026-08-14): injected **08:24** →
+`az policy state trigger-scan` reported the account **NonCompliant** ~**08:45** → remediation task
+(`ExistingNonCompliant`) created **08:56:55**, `provisioningState: Succeeded`, and
+`allowBlobPublicAccess` verified **false** within ~1–2 min. So Policy provided **detection + the
+one automated remediation** (deliverable #4). Honest caveats: unattended Policy evaluation runs on
+a cycle up to ~24h (we forced it on-demand — so realistic MTTD is "next cycle," not seconds); and
+remediating *existing* resources requires a remediation task. Bonus: because the Modify effect is
+still assigned, it now also **prevents** re-enabling public access (it intercepts the ARM write) —
+a prevention story on top of remediation. Reproducible commands: `detection/azure-policy/`.
